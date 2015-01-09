@@ -1,0 +1,102 @@
+#! /usr/bin/env bash
+
+usage() {
+	if [ -n "$1" ]; then
+		echo $1;
+	fi
+	echo "Usage: $0 [-lvd] [-a <author>] [-m <message>] [svn_url]" 1>&2
+	echo "-l: show log messages" 1>&2
+	echo "-v: be verbose when showing log messages" 1>&2
+	echo "-d: show diff output" 1>&2
+	echo "-a: search by author" 1>&2
+	echo "-m: search by message" 1>&2
+	echo "-r: the svn revision argument" 1>&2
+}
+
+implode() {
+	SAVE_IFS=$IFS
+	IFS=","
+	IMPLODED="${*}"
+	IFS=$SAVE_IFS
+	echo $IMPLODED
+}
+
+while getopts "hlvda:m:r:p:" o; do
+    case "${o}" in
+    	h)
+			usage
+			exit 0
+			;;
+    	l | d)
+			OPTIONS="${OPTIONS}${o}"
+			;;
+        a)
+            AUTHOR=${OPTARG}
+            ;;
+        m)
+            MESSAGE=${OPTARG}
+            ;;
+        r)
+			REVISIONS=${OPTARG}
+			;;
+		v)
+			LOG_OPTIONS="-v"
+			;;
+		p)  
+     		PATHS=${OPTARG}
+     		;;
+        *)
+            usage
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+if [[ -z $OPTIONS ]]; then
+	OPTIONS="l"
+fi
+
+WC=${1-"."}
+
+svn info $WC
+if [ $? -ne 0 ]; then
+	# svn info returned an error code.
+    echo "Error, exiting"
+    exit $?
+fi
+
+# Set default value for REVISIONS if it isn't already set.
+REVISIONS=${REVISIONS-"0:HEAD"}
+
+# Build XPath
+if [[ -n $AUTHOR ]]; then
+	SEARCH="contains(author,'$AUTHOR')"
+fi
+if [[ -n $MESSAGE ]]; then
+	if [[ -n $SEARCH ]]; then
+	 	SEARCH="${SEARCH} and "
+	fi
+	SEARCH="${SEARCH}contains(msg,'$MESSAGE')"
+fi
+if [[ -n $PATHS ]]; then
+	if [[ -n $SEARCH ]]; then
+	 	SEARCH="${SEARCH} and "
+	fi
+	SEARCH="${SEARCH}paths/path[contains(text(), '${PATHS}')]"
+	XML_LOG_OPTIONS="-v"
+fi
+
+# Filter revisions matching the search query.
+REVISIONS=`svn log --xml -r "${REVISIONS}" ${XML_LOG_OPTIONS} $WC | xmlstarlet sel -t -m "//logentry[$SEARCH]" -v "attribute::revision" -n `
+
+echo "Matching revisions: ${REVISIONS}"
+if [[ $OPTIONS == *l* ]]; then
+    svn log $LOG_OPTIONS -c `implode ${REVISIONS}` $WC
+fi
+if [[ $OPTIONS == *d* ]]; then
+	for REVISION in $REVISIONS; do
+		svn diff -c $REVISION $WC
+	done;
+fi
+echo "Done."
